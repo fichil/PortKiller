@@ -52,15 +52,23 @@ public class PortKiller {
     }
 
 
-    /** 通过 netstat -ano 查端口对应 PID */
+    /** 通过 netstat + findstr 过滤查端口对应 PID（比全量 netstat 快很多） */
     public static Set<Integer> findPidsByPort(int port, boolean onlyListening) throws Exception {
-        List<String> output = exec(Arrays.asList("netstat.exe", "-ano"), 8000);
+        // 用 findstr 先过滤包含 :port 的行，避免每次读全量 netstat
+        String p = String.valueOf(port);
+
+        // 兼容：
+        // 0.0.0.0:8080
+        // 127.0.0.1:8080
+        // [::]:8080
+        // [::1]:8080
+        String cmd = "netstat -ano | findstr /R /C:\":" + p + " \" /C:\":" + p + "$\"";
+
+        List<String> output = exec(Arrays.asList("cmd.exe", "/c", cmd), 8000);
+
         Set<Integer> pids = new LinkedHashSet<Integer>();
 
-        String needle = ":" + port;
-
-        // netstat 行示例:
-        // TCP    0.0.0.0:8080    0.0.0.0:0    LISTENING    12345
+        // netstat 行尾通常是 PID；状态可能有 LISTENING/ESTABLISHED/TIME_WAIT...
         Pattern pattern = Pattern.compile("\\s+(LISTENING|ESTABLISHED|TIME_WAIT|CLOSE_WAIT)\\s+(\\d+)\\s*$");
 
         for (int i = 0; i < output.size(); i++) {
@@ -68,10 +76,6 @@ public class PortKiller {
             if (line == null) continue;
             line = line.trim();
             if (line.length() == 0) continue;
-
-            // 只匹配本端口（本地地址栏包含 :port）
-            // 注意：netstat 本地地址列可能是 0.0.0.0:8080 或 [::]:8080
-            if (line.indexOf(needle) < 0) continue;
 
             if (onlyListening && line.indexOf("LISTENING") < 0) continue;
 
@@ -84,27 +88,51 @@ public class PortKiller {
         return pids;
     }
 
-    /** tasklist 查 PID 的进程名 */
+    /** 优先 PowerShell Get-Process 查 PID 的进程名，拿不到再 tasklist */
     public static String queryProcessName(int pid) throws Exception {
         Integer key = Integer.valueOf(pid);
         if (PROC_NAME_CACHE.containsKey(key)) return PROC_NAME_CACHE.get(key);
 
         String name = "";
-        try {
-            List<String> out = exec(Arrays.asList(
-                    "cmd.exe", "/c",
-                    "tasklist /FO CSV /NH /FI \"PID eq " + pid + "\""
-            ), 2000); // 缩短到 2s
 
-            if (out != null && !out.isEmpty()) {
-                String line = out.get(0).trim();
-                if (line.toLowerCase().indexOf("info:") < 0 && line.startsWith("\"")) {
-                    int idx = line.indexOf("\",");
-                    if (idx > 1) name = line.substring(1, idx);
+        // 1) PowerShell 优先（更稳、无 CSV 解析）
+        try {
+            String ps = "(Get-Process -Id " + pid + " -ErrorAction SilentlyContinue).ProcessName";
+            ExecResult r = execWithTimeout0(Arrays.asList(
+                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                    "-Command", ps
+            ), 2000);
+
+            if (r != null && r.lines != null && !r.lines.isEmpty()) {
+                String line0 = r.lines.get(0);
+                if (line0 != null) {
+                    line0 = line0.trim();
+                    if (line0.length() > 0 && line0.indexOf("Get-Process") < 0) {
+                        name = line0;
+                    }
                 }
             }
         } catch (Exception ignore) {
             // ignore
+        }
+
+        // 2) fallback：tasklist
+        if (name == null || name.length() == 0) {
+            try {
+                List<String> out = exec(Arrays.asList(
+                        "cmd.exe", "/c",
+                        "tasklist /FO CSV /NH /FI \"PID eq " + pid + "\""
+                ), 2000);
+
+                if (out != null && !out.isEmpty()) {
+                    String line = out.get(0).trim();
+                    if (line.toLowerCase().indexOf("info:") < 0 && line.startsWith("\"")) {
+                        int idx = line.indexOf("\",");
+                        if (idx > 1) name = line.substring(1, idx);
+                    }
+                }
+            } catch (Exception ignore) {
+            }
         }
 
         PROC_NAME_CACHE.put(key, name);
