@@ -10,6 +10,7 @@ import java.nio.charset.Charset;
 public class PortKiller {
 
     private static volatile String CACHED_CHARSET;
+    private static final Map<Integer, String> PROC_NAME_CACHE = new HashMap<Integer, String>();
     public static void main(String[] args) throws Exception {
         List<Integer> ports = ConfigLoader.getPorts();
         boolean onlyListening = ConfigLoader.isOnlyListening();
@@ -44,7 +45,7 @@ public class PortKiller {
                     System.out.println("  [DRY-RUN] Would kill PID=" + pid);
                     continue;
                 }
-                int code = killPid(pid.intValue(), forceKill);
+                int code = killPid(pid.intValue(), port, forceKill, onlyListening);
                 System.out.println("  kill result exitCode=" + code);
             }
         }
@@ -85,57 +86,118 @@ public class PortKiller {
 
     /** tasklist 查 PID 的进程名 */
     public static String queryProcessName(int pid) throws Exception {
-        // 只取 Name，一行输出
-        String script = "$p=Get-Process -Id " + pid + " -ErrorAction SilentlyContinue; "
-                + "if($p){$p.ProcessName}else{''}";
+        Integer key = Integer.valueOf(pid);
+        if (PROC_NAME_CACHE.containsKey(key)) return PROC_NAME_CACHE.get(key);
 
-        List<String> out = exec(Arrays.asList(
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-Command", script
-        ), 8000);
+        String name = "";
+        try {
+            List<String> out = exec(Arrays.asList(
+                    "cmd.exe", "/c",
+                    "tasklist /FO CSV /NH /FI \"PID eq " + pid + "\""
+            ), 2000); // 缩短到 2s
 
-        if (out == null || out.isEmpty()) return "";
-        return out.get(0).trim();
+            if (out != null && !out.isEmpty()) {
+                String line = out.get(0).trim();
+                if (line.toLowerCase().indexOf("info:") < 0 && line.startsWith("\"")) {
+                    int idx = line.indexOf("\",");
+                    if (idx > 1) name = line.substring(1, idx);
+                }
+            }
+        } catch (Exception ignore) {
+            // ignore
+        }
+
+        PROC_NAME_CACHE.put(key, name);
+        return name;
     }
 
 
+
     /** taskkill 杀进程 */
-    public static int killPid(int pid, boolean force) throws Exception {
-        try {
+    /** 杀进程：以“端口是否释放”为成功标准 */
+    public static int killPid(int pid, int port, boolean forceKill, boolean onlyListening) throws Exception {
+
+        // 参数建议：最多重试 4 次
+        int maxAttempts = 4;
+
+        // 每次 kill 后的等待（ms）
+        long sleepAfterKillMs = 1000;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+
+            // 1) 如果端口已经空了，直接认为成功（不要再纠结 PID）
+            if (isPortFree(port, onlyListening)) {
+                System.out.println("    [OK] Port " + port + " already free.");
+                return 0;
+            }
+
+            // 2) 如果该 pid 已经不再占用该端口，也认为成功（端口级 KPI）
+            if (!isPidStillHoldingPort(pid, port, onlyListening)) {
+                System.out.println("    [OK] PID " + pid + " no longer holds port " + port + ".");
+                return 0;
+            }
+
+            System.out.println("    [KILL] attempt " + attempt + "/" + maxAttempts + " pid=" + pid + " port=" + port);
+
+            // 3) 优先 taskkill（加 /T），forceKill 才 /F
             List<String> cmd = new ArrayList<String>();
             cmd.add("taskkill.exe");
             cmd.add("/PID");
             cmd.add(String.valueOf(pid));
-            if (force) cmd.add("/F");
+            cmd.add("/T"); // 关键：杀进程树，避免卡在子进程
+            if (forceKill) cmd.add("/F");
 
-            ExecResult r = execWithTimeout0(cmd, 15000);
-            for (int i = 0; i < r.lines.size(); i++) System.out.println("    " + r.lines.get(i));
-            return r.exitCode;
+            ExecResult r = null;
+            boolean taskkillTimedOut = false;
 
-        } catch (RuntimeException ex) {
-            // fallback: PowerShell Stop-Process
-            System.out.println("    [WARN] taskkill timeout, fallback to Stop-Process. " + ex.getMessage());
-
-            String script =
-                    "try { " +
-                            "  Stop-Process -Id " + pid + " -Force -ErrorAction Stop; " +
-                            "} catch { } " +
-                            "$p = Get-Process -Id " + pid + " -ErrorAction SilentlyContinue; " +
-                            "if($p){ exit 2 } else { exit 0 }";
-
-            ExecResult r2 = execWithTimeout0(Arrays.asList(
-                    "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script
-            ), 15000);
-
-            if (r2.exitCode != 0) {
-                throw new RuntimeException("Stop-Process failed, pid still exists: " + pid);
+            try {
+                // 超时建议拉长：15s 很容易不够
+                r = execWithTimeout0(cmd, 45000);
+                for (int i = 0; i < r.lines.size(); i++) System.out.println("    " + r.lines.get(i));
+            } catch (RuntimeException ex) {
+                taskkillTimedOut = true;
+                System.out.println("    [WARN] taskkill timeout: " + ex.getMessage());
             }
-            return 0;
 
+            // 4) 如果 taskkill 超时 or 非0，做一次 fallback：PowerShell Stop-Process
+            // 4) taskkill 超时/失败后，先给系统一点回收时间，然后复查端口
+            try { Thread.sleep(800); } catch (InterruptedException ignore) {}
+
+            if (!isPidStillHoldingPort(pid, port, onlyListening)) {
+                System.out.println("    [OK] Port " + port + " released after taskkill (skip fallback).");
+                return 0;
+            }
+
+// 仍占用才 fallback
+            if (taskkillTimedOut || (r != null && r.exitCode != 0)) {
+                String ps =
+                        "try { Stop-Process -Id " + pid + " -Force -ErrorAction SilentlyContinue } catch { }";
+                ExecResult r2 = execWithTimeout0(Arrays.asList(
+                        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps
+                ), 15000); // fallback 不要再 45s，15s 足够
+            }
+
+
+            // 5) 等一会儿，让系统回收句柄/端口
+            try { Thread.sleep(sleepAfterKillMs); } catch (InterruptedException ignore) {}
+
+            // 6) 再复查端口占用情况
+            if (!isPidStillHoldingPort(pid, port, onlyListening)) {
+                System.out.println("    [OK] Port " + port + " released from pid=" + pid);
+                return 0;
+            }
+        }
+
+        // 7) 走到这里：多次尝试后端口仍被该 pid 占用
+        // forceKill=true 才当失败；否则输出 WARN 继续
+        if (forceKill) {
+            throw new RuntimeException("Kill failed: pid still holds port after retries. pid=" + pid + ", port=" + port);
+        } else {
+            System.out.println("    [WARN] Unable to release port " + port + " from pid=" + pid + " (forceKill=false).");
+            return 2;
         }
     }
+
 
 
 
@@ -294,4 +356,15 @@ public class PortKiller {
         p.waitFor();
         return lines;
     }
+
+    private static boolean isPidStillHoldingPort(int pid, int port, boolean onlyListening) throws Exception {
+        Set<Integer> pids = findPidsByPort(port, onlyListening);
+        return pids.contains(Integer.valueOf(pid));
+    }
+
+    private static boolean isPortFree(int port, boolean onlyListening) throws Exception {
+        Set<Integer> pids = findPidsByPort(port, onlyListening);
+        return pids.isEmpty();
+    }
+
 }
