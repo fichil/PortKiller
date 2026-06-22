@@ -256,50 +256,7 @@ public class PortKiller {
         ExecResult r = execWithTimeout0(command, timeoutMs);
         return r.lines;
     }
-
-    /**
-     * Working from home is becoming increasingly popular.
-     * Do the advantages of working from home outweigh the disadvantages?
-     * @param command
-     * @param timeoutMs
-     * @return
-     * @throws Exception
-     */
-    /**
-     In recent years, working from home has become a common working arrangement, especially with the development of digital technology. While this trend offers several benefits, it also brings certain challenges. Overall, I believe that the advantages of working from home outweigh the disadvantages.
-
-     One major advantage of remote work is increased productivity. Employees can avoid long commutes, which saves time and reduces daily stress. As a result, they are able to focus more on their tasks and manage their working hours more efficiently. In addition, companies can reduce operational costs such as office rent and utilities, leading to higher overall efficiency.
-
-     Another significant benefit is improved work-life balance. Working from home allows employees to spend more time with their families and better manage personal responsibilities. This flexibility can increase job satisfaction and employee retention, which is highly valuable from an organizational perspective.
-
-     However, working from home also has some drawbacks. The lack of face-to-face communication may lead to misunderstandings and weaken teamwork. Moreover, some employees may struggle with self-discipline and feel isolated, which can negatively affect their mental health and performance.
-
-     Despite these disadvantages, most of these issues can be mitigated through effective management, such as regular online meetings, clear performance evaluation systems, and the use of collaboration tools.
-
-     In conclusion, although working from home presents certain challenges, its benefits in terms of productivity, cost efficiency, and work-life balance make it a more advantageous working model in the long run.
-     */
-    /**
-     * Working from home is becoming increasingly popular.
-     * Do the advantages of working from outweigh the disadvantages?
-     *
-     * In recent years,working from home has become a common working arrangement,especially with the development of digital technology.While this trend offers several benefits,it also brings certain challenges.Overall,I believe that the advantages of working from home outweigh the disadvantages.
-     * One major advantage of remote work is increased productivity, Employees can avoid long commutes,which saves time and reduces daily stress. As a result,they are able to focus more on their tasks and manage their working hours more efficiently. In addition, companies can reduce operational costs such as office rent and utilities,leading to higher overall efficiency.
-     * Another significant benefit is improved work-life balance.Working from home allows employees to spend more time with their families and better manage personal responsibilities.The flexibility can increase job satisfaction and employee retention, which is highly valiable from an organizational perspective.
-     * However,working from home also has some drawbacks.The lack of face-to-face communication may lead to misunderstandings and weaken teamwork.Moreover,some employees may struggle with self-discipline and feel isolated,which can negatively affect their mental health and performance.
-     * Despite these disadvantages,most of these issues can be mitigated through effective management, such as regular online meetings,clear performance evaluation systems,and the use of collaboration tools.
-     * In conclusion,although working from home presents certain challenges,its benefits in terms of productivity,cost efficiency,and work-life balance make it a more advantageous working model in the long run.
-     */
-
-    /**
-     * Working from home is becoming increasing popular.
-     * Do thr advantages of working from outweigh has the disadvantages?
-     */
-
-    /**
-     *
-     * Working from home is becoming increasingly popular.
-     * Do the advantages of working fr
-     */
+    
 
     private static ExecResult execWithTimeout0(List<String> command, long timeoutMs) throws Exception {
         ProcessBuilder pb = new ProcessBuilder(command);
