@@ -1,8 +1,15 @@
 portKiller:
   ports:
+    # springboot
+    - 5173
+    - 8761
+    - 18080
+    - 18081
+    - 18082
+
     # http ports
     - 8080
-    - 8081
+    # - 8081 留给codex
     - 8082
     - 8083
     - 8084
@@ -18,6 +25,8 @@ portKiller:
     - 8094
     - 8095
     - 8096
+    # 8097给wms-java用
+    - 8097
 
     # JMX ports
     - 1099
